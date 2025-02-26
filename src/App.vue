@@ -30,14 +30,14 @@
 
   main {
     display: flex;
-    justify-content: flex-start;
-    align-items: flex-start;
+    justify-content: center;
+    align-items: center;
     min-height: calc(100vh - 150px);
     padding: 0 2rem;
   }
 
   .game-container {
-    margin-left: 300px;
+    margin-left: 0;
     flex: 1;
     display: flex;
     justify-content: center;
