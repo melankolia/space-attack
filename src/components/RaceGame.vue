@@ -538,7 +538,6 @@
         <h2>READY TO RACE</h2>
         <p class="controls">← → to move, SPACE to attack</p>
         <p class="blink">PRESS SPACE TO START</p>
-        <p class="blink">NADS ROLE IM COMING, PO WKWK</p>
       </div>
 
       <!-- Game Over Screen -->
