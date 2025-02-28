@@ -1,5 +1,7 @@
 <script setup>
   import { ref, onMounted, onUnmounted } from "vue";
+  import LeaderboardPopup from "./LeaderboardPopup.vue";
+  import WalletConnect from "@/components/WalletConnect.vue";
 
   const carPosition = ref(400); // horizontal position
   const MOVE_SPEED = 7;
@@ -72,6 +74,103 @@
     explosionSound.muted = isMuted.value;
   }
 
+  // Add leaderboard refs
+  const leaderboard = ref([]);
+  const showLeaderboard = ref(false);
+  const walletAddress = ref("");
+  const isNewHighScore = ref(false);
+  const MAX_LEADERBOARD_ENTRIES = 10;
+
+  // Add this new ref at the top with other refs
+  const isScoreSubmitted = ref(false);
+
+  // Function to load leaderboard from localStorage
+  function loadLeaderboard() {
+    try {
+      const savedLeaderboard = localStorage.getItem("leaderboard");
+      if (savedLeaderboard) {
+        leaderboard.value = JSON.parse(savedLeaderboard);
+      }
+    } catch (error) {
+      console.error("Error loading leaderboard:", error);
+      leaderboard.value = [];
+    }
+  }
+
+  // Function to save leaderboard to localStorage
+  function saveLeaderboard() {
+    try {
+      localStorage.setItem("leaderboard", JSON.stringify(leaderboard.value));
+    } catch (error) {
+      console.error("Error saving leaderboard:", error);
+    }
+  }
+
+  // Function to add score to leaderboard
+  function addScoreToLeaderboard(name, score) {
+    // Create new entry
+    const newEntry = {
+      name: name || "Anonymous",
+      score: score,
+      level: level.value,
+      date: new Date().toISOString(),
+    };
+
+    // Add to leaderboard
+    leaderboard.value.push(newEntry);
+
+    // Sort by score (descending)
+    leaderboard.value.sort((a, b) => b.score - a.score);
+
+    // Trim to maximum entries
+    if (leaderboard.value.length > MAX_LEADERBOARD_ENTRIES) {
+      leaderboard.value = leaderboard.value.slice(0, MAX_LEADERBOARD_ENTRIES);
+    }
+
+    // Save to localStorage
+    saveLeaderboard();
+  }
+
+  // Function to toggle leaderboard visibility
+  function toggleLeaderboard() {
+    showLeaderboard.value = !showLeaderboard.value;
+  }
+
+  // Function to submit score (called when player enters name)
+  function submitScore() {
+    if (!walletAddress.value) {
+      // Show error or prompt to connect wallet
+      alert("Please connect your wallet to save your score!");
+      return;
+    }
+
+    // Create new entry with wallet address
+    const newEntry = {
+      wallet: walletAddress.value,
+      score: score.value,
+      level: level.value,
+      date: new Date().toISOString(),
+    };
+
+    // Add to leaderboard
+    leaderboard.value.push(newEntry);
+
+    // Sort by score (descending)
+    leaderboard.value.sort((a, b) => b.score - a.score);
+
+    // Trim to maximum entries
+    if (leaderboard.value.length > MAX_LEADERBOARD_ENTRIES) {
+      leaderboard.value = leaderboard.value.slice(0, MAX_LEADERBOARD_ENTRIES);
+    }
+
+    // Save to localStorage
+    saveLeaderboard();
+
+    // Reset states after submission
+    isNewHighScore.value = false;
+    isScoreSubmitted.value = true;
+  }
+
   function startGame() {
     carPosition.value = GAME_WIDTH / 2;
     gameSpeed.value = 5;
@@ -114,6 +213,7 @@
       powerUpTimer.value = null;
     }
     powerUpTimeRemaining.value = 0;
+    isScoreSubmitted.value = false;
   }
 
   function updateCarPosition() {
@@ -272,10 +372,29 @@
 
   function gameOver() {
     isGameOver.value = true;
+
+    // Check if current score is a high score
     if (score.value > highScore.value) {
       highScore.value = score.value;
       localStorage.setItem("highScore", score.value.toString());
     }
+
+    // Check if score qualifies for leaderboard
+    if (
+      leaderboard.value.length < MAX_LEADERBOARD_ENTRIES ||
+      score.value > leaderboard.value[leaderboard.value.length - 1].score
+    ) {
+      isNewHighScore.value = true;
+    }
+
+    // Play explosion sound
+    try {
+      explosionSound.currentTime = 0;
+      explosionSound.play();
+    } catch (error) {
+      console.log("Audio play failed:", error);
+    }
+
     clearInterval(gameLoop.value);
   }
 
@@ -418,6 +537,12 @@
     } else if (e.key === "ArrowRight") {
       isMovingRight.value = true;
     }
+
+    // Add escape key to close leaderboard
+    if (e.key === "Escape" && showLeaderboard.value) {
+      showLeaderboard.value = false;
+      return;
+    }
   }
 
   function handleKeyup(e) {
@@ -431,6 +556,9 @@
   onMounted(() => {
     window.addEventListener("keydown", handleKeydown);
     window.addEventListener("keyup", handleKeyup);
+
+    // Load the leaderboard
+    loadLeaderboard();
   });
 
   onUnmounted(() => {
@@ -444,12 +572,19 @@
     backgroundMusic.pause();
     backgroundMusic.currentTime = 0;
   });
+
+  // Add a handler for wallet connection
+  const handleWalletConnected = (address) => {
+    walletAddress.value = address;
+    // If you want to automatically submit when wallet is connected
+    // submitScore();
+  };
 </script>
 
 <template>
   <div class="game-container">
-    <!-- Score display inside the road -->
-    <div class="road-hud">
+    <!-- Add v-show to the score display to hide it when leaderboard is shown -->
+    <div class="road-hud" v-show="!showLeaderboard">
       <div class="score-container">
         <div class="score-value">{{ score.toString().padStart(6, "0") }}</div>
         <div class="level-badge">LVL {{ level }}</div>
@@ -540,13 +675,71 @@
         <p class="blink">PRESS SPACE TO START</p>
       </div>
 
-      <!-- Game Over Screen -->
-      <div v-if="isGameOver" class="game-over retro-text">
-        <h2>GAME OVER</h2>
-        <p class="score-text">{{ score }}</p>
-        <p v-if="score === highScore" class="new-record">NEW RECORD!</p>
-        <p class="blink">PRESS SPACE TO RESTART</p>
+      <!-- Add v-show to the game over score board as well -->
+      <div v-if="isGameOver" class="game-over" v-show="!showLeaderboard">
+        <h2 class="retro-text">GAME OVER</h2>
+        <div class="score-board">
+          <div class="final-score-text">SCORE: {{ score }}</div>
+          <div class="final-high-score-text">HIGH: {{ highScore }}</div>
+          <div class="final-level-text">LEVEL: {{ level }}</div>
+
+          <!-- Show high score form only if it's a new high score and score hasn't been submitted -->
+          <div
+            v-if="isNewHighScore && !isScoreSubmitted"
+            class="high-score-form"
+          >
+            <p class="new-record">NEW HIGH SCORE!</p>
+
+            <!-- Show wallet connect if not connected -->
+            <div v-if="!walletAddress">
+              <p class="save-score-text">
+                Connect your wallet to save your score:
+              </p>
+              <WalletConnect @walletConnected="handleWalletConnected" />
+            </div>
+
+            <!-- Show submit button if wallet is connected -->
+            <div v-else>
+              <p class="save-score-text">
+                Ready to save your score with wallet:
+              </p>
+              <p class="wallet-address save-score-text">
+                {{
+                  walletAddress.substring(0, 6) +
+                  "..." +
+                  walletAddress.substring(38)
+                }}
+              </p>
+              <button @click="submitScore" class="submit-btn">
+                Submit Score
+              </button>
+            </div>
+          </div>
+
+          <!-- Show confirmation after submission -->
+          <div v-if="isScoreSubmitted" class="score-submitted">
+            <p>Score saved successfully!</p>
+          </div>
+
+          <div class="game-over-buttons">
+            <button @click="toggleLeaderboard" class="leaderboard-btn">
+              View Leaderboard
+            </button>
+          </div>
+        </div>
+        <div class="blink">PRESS SPACE TO RESTART</div>
       </div>
+
+      <!-- Leaderboard overlay -->
+      <LeaderboardPopup
+        :show="showLeaderboard"
+        :leaderboard="leaderboard"
+        :current-score="score"
+        :current-level="level"
+        :connected-wallet="walletAddress"
+        @close="toggleLeaderboard"
+        @wallet-connected="handleWalletConnected"
+      />
     </div>
   </div>
 </template>
@@ -766,17 +959,27 @@
   .score-board {
     display: flex;
     flex-direction: column;
-    gap: 1rem;
-    padding: 1rem;
-    background: rgba(18, 4, 88, 0.9);
-    border: 4px solid #ff00ff;
-    box-shadow: 0 0 10px #ff00ff, 0 0 20px #00ffff;
-    min-width: 200px;
+    align-items: center;
+    margin: 15px 0;
   }
 
-  .score-text {
-    font-size: 2rem;
-    margin: 1rem 0;
+  /* Smaller text for final score on game over screen */
+  .final-score-text,
+  .final-high-score-text,
+  .final-level-text {
+    font-size: 20px;
+    color: white;
+    margin: 5px 0;
+    text-shadow: 0 0 8px rgba(0, 255, 255, 0.5);
+  }
+
+  .final-score-text {
+    color: #00ffff;
+    font-weight: bold;
+  }
+
+  .final-high-score-text {
+    color: #ff00ff;
   }
 
   .blink {
@@ -1159,5 +1362,181 @@
 
   .car.shielded {
     filter: drop-shadow(0 0 10px #00ffff);
+  }
+
+  .leaderboard-toggle {
+    display: none; /* Hide it completely */
+  }
+
+  .leaderboard-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.8);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 2000;
+  }
+
+  .leaderboard-panel {
+    background: rgba(18, 4, 88, 0.95);
+    border: 4px solid #ff00ff;
+    border-radius: 8px;
+    padding: 20px;
+    width: 80%;
+    max-width: 500px;
+    max-height: 80%;
+    overflow-y: auto;
+    box-shadow: 0 0 20px rgba(255, 0, 255, 0.8), 0 0 40px rgba(0, 255, 255, 0.5);
+  }
+
+  .leaderboard-panel h2 {
+    color: #00ffff;
+    text-align: center;
+    margin-bottom: 20px;
+    font-size: 28px;
+  }
+
+  /* Leaderboard table styles */
+  .leaderboard-table {
+    width: 100%;
+    border-collapse: collapse;
+    color: white;
+    margin-bottom: 20px;
+  }
+
+  .leaderboard-table th,
+  .leaderboard-table td {
+    padding: 10px;
+    text-align: center;
+    border-bottom: 1px solid rgba(255, 0, 255, 0.3);
+  }
+
+  .leaderboard-table th {
+    color: #00ffff;
+    font-size: 18px;
+    font-weight: bold;
+    border-bottom: 2px solid #ff00ff;
+  }
+
+  .leaderboard-table tr:nth-child(odd) {
+    background: rgba(255, 0, 255, 0.1);
+  }
+
+  .leaderboard-table tr:hover {
+    background: rgba(0, 255, 255, 0.1);
+  }
+
+  /* Button styles */
+  .close-btn,
+  .restart-btn,
+  .leaderboard-btn,
+  .submit-btn {
+    background: rgba(255, 0, 255, 0.2);
+    color: #00ffff;
+    border: 2px solid #00ffff;
+    padding: 8px 16px;
+    margin: 5px;
+    border-radius: 8px;
+    font-size: 16px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+  }
+
+  .close-btn:hover,
+  .restart-btn:hover,
+  .leaderboard-btn:hover,
+  .submit-btn:hover {
+    background: rgba(0, 255, 255, 0.2);
+    transform: scale(1.05);
+    box-shadow: 0 0 10px rgba(0, 255, 255, 0.5);
+  }
+
+  /* High score form styles */
+  .high-score-form {
+    margin: 15px 0;
+    padding: 10px;
+    background: rgba(0, 0, 0, 0.3);
+    border-radius: 8px;
+    border: 1px solid #ff00ff;
+  }
+
+  .input-container {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .input-container label {
+    color: #00ffff;
+    font-size: 14px;
+  }
+
+  .input-container input {
+    background: rgba(0, 0, 0, 0.5);
+    border: 2px solid #00ffff;
+    border-radius: 4px;
+    color: white;
+    padding: 8px;
+    font-size: 16px;
+    outline: none;
+  }
+
+  .input-container input:focus {
+    box-shadow: 0 0 8px rgba(0, 255, 255, 0.5);
+  }
+
+  /* Animation for the new record text */
+  .new-record {
+    color: #ff00ff;
+    font-size: 18px;
+    text-align: center;
+    margin-bottom: 10px;
+    animation: pulse 0.5s ease-in-out infinite alternate;
+  }
+
+  .game-over-buttons {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    margin-top: 15px;
+  }
+
+  .wallet-address {
+    font-family: monospace;
+    background: rgba(0, 0, 0, 0.5);
+    padding: 5px 10px;
+    border-radius: 4px;
+    display: inline-block;
+    color: #00ffff;
+    margin: 5px 0;
+  }
+
+  .score-submitted {
+    color: #00ff66;
+    margin-top: 10px;
+    font-size: 16px;
+    animation: fadeIn 0.5s ease-in-out;
+  }
+
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+      transform: translateY(-10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .save-score-text {
+    font-size: 14px;
+    color: #00ffff;
+    margin-bottom: 8px;
+    opacity: 0.9;
   }
 </style>
