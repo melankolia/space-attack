@@ -2,6 +2,7 @@
   import { ref, onMounted, onUnmounted } from "vue";
   import LeaderboardPopup from "./LeaderboardPopup.vue";
   import WalletConnect from "@/components/WalletConnect.vue";
+  import axios from "axios";
 
   const carPosition = ref(400); // horizontal position
   const MOVE_SPEED = 7;
@@ -84,6 +85,12 @@
   // Add this new ref at the top with other refs
   const isScoreSubmitted = ref(false);
 
+  // Replace the single snackbar refs with an array of notifications
+  const notifications = ref([]);
+
+  // Add a new ref for submit loading state
+  const isSubmitting = ref(false);
+
   // Function to load leaderboard from localStorage
   function loadLeaderboard() {
     try {
@@ -136,39 +143,48 @@
     showLeaderboard.value = !showLeaderboard.value;
   }
 
-  // Function to submit score (called when player enters name)
-  function submitScore() {
+  // Update the submitScore function
+  async function submitScore() {
     if (!walletAddress.value) {
-      // Show error or prompt to connect wallet
       alert("Please connect your wallet to save your score!");
       return;
     }
 
-    // Create new entry with wallet address
-    const newEntry = {
-      wallet: walletAddress.value,
-      score: score.value,
-      level: level.value,
-      date: new Date().toISOString(),
-    };
+    isSubmitting.value = true;
 
-    // Add to leaderboard
-    leaderboard.value.push(newEntry);
+    try {
+      const response = await axios.post(
+        "https://space-attack-be-production.up.railway.app/submit",
+        {
+          address: walletAddress.value,
+          score: score.value,
+          level: level.value,
+        }
+      );
 
-    // Sort by score (descending)
-    leaderboard.value.sort((a, b) => b.score - a.score);
+      // Show notification with transaction hash
+      const txHash = response.data?.transactionHash || "";
+      showNotification(
+        "High Score Submitted",
+        "Your score has been saved! 🏆",
+        txHash
+      );
 
-    // Trim to maximum entries
-    if (leaderboard.value.length > MAX_LEADERBOARD_ENTRIES) {
-      leaderboard.value = leaderboard.value.slice(0, MAX_LEADERBOARD_ENTRIES);
+      // Set submitted state
+      isScoreSubmitted.value = true;
+
+      // Show leaderboard after successful submission
+      showLeaderboard.value = true;
+    } catch (error) {
+      console.error("Error submitting score:", error);
+      showNotification(
+        "Error",
+        "Failed to submit score. Please try again.",
+        ""
+      );
+    } finally {
+      isSubmitting.value = false;
     }
-
-    // Save to localStorage
-    saveLeaderboard();
-
-    // Reset states after submission
-    isNewHighScore.value = false;
-    isScoreSubmitted.value = true;
   }
 
   function startGame() {
@@ -266,6 +282,41 @@
     return 0.002 + additionalChance;
   }
 
+  // Update the function to show snackbar with title and hash
+  function showNotification(title, message, txHash = "") {
+    const id = Date.now(); // Unique ID for each notification
+    const notification = {
+      id,
+      title,
+      message,
+      txHash,
+    };
+
+    notifications.value.push(notification);
+
+    // Remove this notification after 3 seconds
+    setTimeout(() => {
+      notifications.value = notifications.value.filter((n) => n.id !== id);
+    }, 3000);
+  }
+
+  // Update the sendScoreToServer function
+  async function sendScoreToServer(score) {
+    try {
+      const response = await axios.post(
+        "https://space-attack-be-production.up.railway.app/hit-enemy",
+        {
+          score: score,
+        }
+      );
+      const message = response.data?.message || "";
+      const txHash = response.data?.transactionHash || "";
+      showNotification("Score Update", message + " 🎯", txHash);
+    } catch (error) {
+      console.error("Error sending score:", error);
+    }
+  }
+
   function updateGame() {
     if (isGameOver.value) return;
 
@@ -308,6 +359,9 @@
         if (checkBulletCollision(bullet, obstacle)) {
           bullets.value.splice(bulletIndex, 1);
           score.value += 5 * scoreMultiplier.value;
+
+          // Send score to server when enemy is hit
+          sendScoreToServer(score.value);
 
           return false; // Remove the obstacle
         }
@@ -582,6 +636,26 @@
 </script>
 
 <template>
+  <!-- Replace single snackbar with multiple notifications -->
+  <div class="notifications-container">
+    <div
+      v-for="notification in notifications"
+      :key="notification.id"
+      class="snackbar"
+    >
+      <div class="snackbar-title">{{ notification.title }}</div>
+      <div class="snackbar-message">{{ notification.message }}</div>
+      <div v-if="notification.txHash" class="snackbar-hash">
+        TX:
+        {{
+          notification.txHash.substring(0, 6) +
+          "..." +
+          notification.txHash.substring(62)
+        }}
+      </div>
+    </div>
+  </div>
+
   <div class="game-container">
     <!-- Add v-show to the score display to hide it when leaderboard is shown -->
     <div class="road-hud" v-show="!showLeaderboard">
@@ -710,8 +784,15 @@
                   walletAddress.substring(38)
                 }}
               </p>
-              <button @click="submitScore" class="submit-btn">
-                Submit Score
+              <button
+                @click="submitScore"
+                class="submit-btn"
+                :disabled="isSubmitting"
+              >
+                <span v-if="isSubmitting" class="loading-spinner"></span>
+                <span>{{
+                  isSubmitting ? "Submitting..." : "Submit Score"
+                }}</span>
               </button>
             </div>
           </div>
@@ -1538,5 +1619,132 @@
     color: #00ffff;
     margin-bottom: 8px;
     opacity: 0.9;
+  }
+
+  /* Update the notifications container */
+  .notifications-container {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    z-index: 10000;
+  }
+
+  /* Update snackbar styles for a more compact and eye-catching design */
+  .snackbar {
+    background: rgba(0, 0, 0, 0.85);
+    border-left: 4px solid #00ffff;
+    color: #fff;
+    padding: 8px 12px;
+    border-radius: 4px;
+    backdrop-filter: blur(8px);
+    animation: slideInAndGlow 0.3s ease-out;
+    box-shadow: 0 0 20px rgba(0, 255, 255, 0.2);
+    min-width: 180px;
+    max-width: 250px;
+    transform-origin: right;
+  }
+
+  .snackbar-title {
+    font-size: 12px;
+    font-weight: bold;
+    margin-bottom: 2px;
+    color: #00ffff;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  .snackbar-title::before {
+    content: "•";
+    color: #00ffff;
+    animation: pulse 1s infinite;
+  }
+
+  .snackbar-message {
+    font-size: 11px;
+    margin-bottom: 2px;
+    opacity: 0.9;
+  }
+
+  .snackbar-hash {
+    font-size: 9px;
+    opacity: 0.7;
+    font-family: monospace;
+    background: rgba(0, 255, 255, 0.1);
+    padding: 2px 4px;
+    border-radius: 2px;
+    word-break: break-all;
+  }
+
+  @keyframes slideInAndGlow {
+    0% {
+      transform: translateX(100%) scale(0.9);
+      opacity: 0;
+      box-shadow: 0 0 0 rgba(0, 255, 255, 0);
+    }
+    50% {
+      box-shadow: 0 0 25px rgba(0, 255, 255, 0.5);
+    }
+    100% {
+      transform: translateX(0) scale(1);
+      opacity: 1;
+      box-shadow: 0 0 20px rgba(0, 255, 255, 0.2);
+    }
+  }
+
+  @keyframes pulse {
+    0% {
+      opacity: 0.4;
+    }
+    50% {
+      opacity: 1;
+    }
+    100% {
+      opacity: 0.4;
+    }
+  }
+
+  .submit-btn {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-width: 120px;
+  }
+
+  .submit-btn:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+  }
+
+  @keyframes spin {
+    0% {
+      transform: rotate(0deg);
+    }
+    100% {
+      transform: rotate(360deg);
+    }
+  }
+
+  .loading-spinner {
+    width: 16px;
+    height: 16px;
+    border: 2px solid rgba(0, 255, 255, 0.3);
+    border-radius: 50%;
+    border-top-color: #00ffff;
+    animation: spin 1s linear infinite;
+  }
+
+  /* Optional: Add a hover effect when not disabled */
+  .submit-btn:not(:disabled):hover {
+    background: rgba(0, 255, 255, 0.2);
+    transform: scale(1.02);
+    box-shadow: 0 0 10px rgba(0, 255, 255, 0.5);
   }
 </style>

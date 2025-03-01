@@ -1,15 +1,12 @@
 <script setup>
-  import { defineEmits } from "vue";
+  import { defineEmits, onMounted, ref, watch } from "vue";
   import WalletConnect from "./WalletConnect.vue";
   import { useVirtualList } from "@vueuse/core";
+  import axios from "axios";
 
   const props = defineProps({
     show: {
       type: Boolean,
-      required: true,
-    },
-    leaderboard: {
-      type: Array,
       required: true,
     },
     connectedWallet: {
@@ -27,13 +24,39 @@
   });
 
   const emit = defineEmits(["close", "walletConnected"]);
+  const serverLeaderboard = ref([]);
+  const isLoading = ref(false);
+  const error = ref(null);
 
-  // Virtual list setup
-  const { list, containerProps, wrapperProps } = useVirtualList(
-    props.leaderboard,
-    {
-      itemHeight: 50, // Height of each row
-      overscan: 10, // Number of items to render outside visible area
+  // Fetch leaderboard data when component is shown
+  async function fetchLeaderboard() {
+    isLoading.value = true;
+    error.value = null;
+
+    try {
+      const response = await axios.get(
+        "https://space-attack-be-production.up.railway.app/leaderboard"
+      );
+      serverLeaderboard.value = response.data.leaderboard.map((entry) => ({
+        wallet: entry.address,
+        score: parseInt(entry.score),
+        level: parseInt(entry.level),
+      }));
+    } catch (err) {
+      console.error("Error fetching leaderboard:", err);
+      error.value = "Failed to load leaderboard data";
+    } finally {
+      isLoading.value = false;
+    }
+  }
+
+  // Watch for show prop changes to fetch data when leaderboard is opened
+  watch(
+    () => props.show,
+    (newValue) => {
+      if (newValue) {
+        fetchLeaderboard();
+      }
     }
   );
 
@@ -47,7 +70,7 @@
 
   function formatAddress(address) {
     if (!address) return "";
-    return `0${address.slice(1, 4)}...${address.slice(-3)}`;
+    return `${address.slice(0, 6)}...${address.slice(-4)}`;
   }
 </script>
 
@@ -56,7 +79,13 @@
     <div class="leaderboard-panel">
       <h2 class="retro-text">TOP SCORES</h2>
 
-      <div class="table-container">
+      <div v-if="isLoading" class="loading-state">Loading leaderboard...</div>
+
+      <div v-else-if="error" class="error-state">
+        {{ error }}
+      </div>
+
+      <div v-else class="table-container">
         <table class="leaderboard-table">
           <thead>
             <tr>
@@ -67,13 +96,13 @@
             </tr>
           </thead>
           <tbody>
-            <tr v-for="(entry, index) in leaderboard" :key="index">
+            <tr v-for="(entry, index) in serverLeaderboard" :key="index">
               <td>{{ index + 1 }}</td>
               <td>{{ formatAddress(entry.wallet) }}</td>
               <td>{{ entry.score }}</td>
               <td>{{ entry.level }}</td>
             </tr>
-            <tr v-if="leaderboard.length === 0">
+            <tr v-if="serverLeaderboard.length === 0">
               <td colspan="4">No scores yet. Be the first!</td>
             </tr>
           </tbody>
@@ -293,5 +322,22 @@
     color: #00ffff;
     font-weight: bold;
     font-size: 20px;
+  }
+
+  /* Add new styles for loading and error states */
+  .loading-state,
+  .error-state {
+    text-align: center;
+    padding: 20px;
+    color: #00ffff;
+    font-size: 16px;
+    background: rgba(0, 0, 0, 0.3);
+    border-radius: 8px;
+    margin: 20px 0;
+  }
+
+  .error-state {
+    color: #ff4444;
+    border: 1px solid #ff4444;
   }
 </style>
